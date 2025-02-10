@@ -52,17 +52,17 @@ class VoiceProcessingThread(QThread):
     transcription_done = pyqtSignal(str)
     image_captured = pyqtSignal(str)
     
-    def __init__(self, camera_thread):
+    def __init__(self, camera_thread, captured_frame_count):
         super().__init__()
         self.camera_thread = camera_thread
         self.running = True
-        self.count = 0
+        self.count = captured_frame_count
     
     def run(self):
         self.process_voice_input()
     
     def process_voice_input(self):
-        audio_file = "voice_input.wav"
+        audio_file = "./temp/voice_input.wav"
         recognizer = sr.Recognizer()
         with sr.Microphone() as source:
             print("開始錄音...")
@@ -81,8 +81,7 @@ class VoiceProcessingThread(QThread):
         # 擷取當前攝影機影像
         ret, frame = self.camera_thread.cap.read()
         if ret:
-            img_path = "captured_frame"+str(self.count)+".jpg"
-            self.count += 1
+            img_path = "./temp/captured_frame"+str(self.count)+".jpg"
             cv2.imwrite(img_path, frame)
             self.image_captured.emit(img_path)
         
@@ -97,6 +96,7 @@ class AICoachApp(QWidget):
         self.initUI()
         self.initCamera()
         self.img_path = None
+        self.captured_frame_count = 0
         self.chat_history = [
             {"role": "system", "content": "你是一名專業的 AI 健身教練，擅長根據使用者的動作、體態和語音問題提供專業的健身建議，請專注於健身領域的知識，並提供正確的運動指導。請自行判斷是否使用圖像生成工具幫助使用者，如果需要，請在回應的結尾加上關鍵字\"請參考下面的圖片說明\", 然後生成一段給DALL-E的prompt。格式參考(假設使用者詢問如何做深蹲):\"1. 一開始基本的徒手深蹲要先把雙腳打開與肩膀同寬，腳尖向前，雙手則可放在胸前交叉交疊或是雙手握拳。\n2. 把腳底平放在地上，將重心放在雙腳上。\n3. 吸氣時將重心慢慢往後，把臀部緩緩地下後移，想像後方有一張椅子，維持個3-5秒的時間，呼氣後再慢慢地回到原來的動作。\n請參考下面的圖片說明\nprompt for DALL-E\""}
         ]
@@ -158,13 +158,17 @@ class AICoachApp(QWidget):
         self.camera_label.setPixmap(QPixmap.fromImage(qimg))
     
     def start_voice_processing(self):
-        self.voice_thread = VoiceProcessingThread(self.camera_thread)
+        self.voice_thread = VoiceProcessingThread(self.camera_thread, self.captured_frame_count)
         self.voice_thread.transcription_done.connect(self.display_transcription)
         self.voice_thread.image_captured.connect(self.display_image)
         self.voice_thread.start()
     
     def display_transcription(self, text):
         self.conversation.append(f'🧑‍💻 你: {text}')
+        if text == "❌ 錄音超時，請再試一次":
+            return
+        else:
+            self.captured_frame_count += 1
         self.get_ai_response(text, self.img_path)
     
     def display_image(self, img_path):
