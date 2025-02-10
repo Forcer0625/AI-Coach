@@ -65,16 +65,16 @@ class VoiceProcessingThread(QThread):
         audio_file = "./temp/voice_input.wav"
         recognizer = sr.Recognizer()
         with sr.Microphone() as source:
-            print("開始錄音...")
+            #print("開始錄音...")
             recognizer.adjust_for_ambient_noise(source, duration=1)
             recognizer.energy_threshold = 300
             try:
                 audio_data = recognizer.listen(source, timeout=5, phrase_time_limit=5)
                 with open(audio_file, "wb") as f:
                     f.write(audio_data.get_wav_data())
-                print("錄音結束")
+                #print("錄音結束")
             except sr.WaitTimeoutError:
-                print("❌ 錄音超時，未偵測到語音")
+                #print("❌ 錄音超時，未偵測到語音")
                 self.transcription_done.emit("❌ 錄音超時，請再試一次")
                 return
         
@@ -142,12 +142,16 @@ class AICoachApp(QWidget):
         self.setLayout(main_layout)
         
     def process_text_input(self):
+        self.voice_button.setDisabled(True)
+        self.send_button.setDisabled(True)
         user_text = self.text_input.toPlainText()
         if user_text.strip():
             self.conversation.append(f'🧑‍💻 你: {user_text}')
             self.text_input.clear()
             self.img_path = None
             self.get_ai_response(user_text, None)
+        self.recover_send_button()
+        self.recover_voice_button()
     
     def initCamera(self):
         self.camera_thread = CameraThread()
@@ -158,6 +162,9 @@ class AICoachApp(QWidget):
         self.camera_label.setPixmap(QPixmap.fromImage(qimg))
     
     def start_voice_processing(self):
+        self.voice_button.setDisabled(True)
+        self.send_button.setDisabled(True)
+        self.voice_button.setText("🎙️ 錄音中...")
         self.voice_thread = VoiceProcessingThread(self.camera_thread, self.captured_frame_count)
         self.voice_thread.transcription_done.connect(self.display_transcription)
         self.voice_thread.image_captured.connect(self.display_image)
@@ -166,14 +173,25 @@ class AICoachApp(QWidget):
     def display_transcription(self, text):
         self.conversation.append(f'🧑‍💻 你: {text}')
         if text == "❌ 錄音超時，請再試一次":
+            self.recover_voice_button()
+            self.recover_send_button()
             return
         else:
             self.captured_frame_count += 1
         self.get_ai_response(text, self.img_path)
+        self.recover_voice_button()
+        self.recover_send_button()
+
+    def recover_voice_button(self):
+        self.voice_button.setDisabled(False)
+        self.voice_button.setText("🎤 語音輸入")
+
+    def recover_send_button(self):
+        self.send_button.setDisabled(False)
     
     def display_image(self, img_path):
         self.img_path = img_path
-        print(f"影像擷取完成: {img_path}")
+        #print(f"影像擷取完成: {img_path}")
     
     def get_ai_response(self, user_input, image_path=None):
         self.chat_history.append({"role": "user", "content": user_input})
@@ -181,18 +199,22 @@ class AICoachApp(QWidget):
         messages = list(self.chat_history)
         
         if image_path:
-            print("取得擷取影像...")
+            #print("取得擷取影像...")
             messages.append({"role": "user", "content": {"type": "image_url", "image_url": f"file://{image_path}"}})
         
-        response = openai.chat.completions.create(
-            model=GPT_MODEL_NAME,
-            messages=messages
-        )
-        ai_text = response["choices"][0]["message"]["content"]
-        self.conversation.append(f'🤖 AI 教練: {ai_text}')
-        self.chat_history.append({"role": "assistant", "content": ai_text})
-        self.img_path = None
-        #print(self.chat_history)
+        try:
+            response = openai.chat.completions.create(
+                model=GPT_MODEL_NAME,
+                messages=messages
+            )
+            ai_text = response["choices"][0]["message"]["content"]
+        except:
+            ai_text = ""
+        finally:
+            self.conversation.append(f'🤖 AI 教練: {ai_text}')
+            self.chat_history.append({"role": "assistant", "content": ai_text})
+            self.img_path = None
+            #print(self.chat_history)
     
     def closeEvent(self, event):
         self.camera_thread.stop()
