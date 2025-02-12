@@ -63,7 +63,6 @@ class VoiceProcessingThread(QThread):
     def __init__(self, camera_thread, captured_frame_count):
         super().__init__()
         self.camera_thread = camera_thread
-        self.running = True
         self.count = captured_frame_count
     
     def run(self):
@@ -95,6 +94,54 @@ class VoiceProcessingThread(QThread):
         segments, _ = whisper_model.transcribe(audio_file)
         transcribed_text = " ".join([segment.text for segment in segments])
         self.transcription_done.emit(transcribed_text)
+
+class AIProcessingThread(QThread):
+    response_ready = pyqtSignal(str)
+    
+    def __init__(self, chat_history, user_text, img_path=None):
+        super().__init__()
+        self.chat_history = chat_history
+        self.user_text = user_text
+        self.img_path = None
+    
+    def run(self):
+        messages = list(self.chat_history)
+        
+        if self.img_path:
+            base64_image = encode_image(self.img_path)
+            messages.append({"role": "user", "content": [
+                        {
+                            "type": "text",
+                            "text": "(請根據圖片回答)"+self.user_text
+                        },
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }}]
+                    })
+        else:
+            messages.append({"role": "user", "content": self.user_text})
+        
+        try:
+            response = openai.chat.completions.create(
+                model=GPT_MODEL_NAME,
+                messages=messages
+            )
+            ai_text = response.choices[0].message.content
+        except:
+            ai_text = ""
+        finally:
+            self.response_ready.emit(ai_text)
+
+        # if "的圖片" in ai_text and "參考" in ai_text:
+        #     ai_text = 0
+        #     image_response = openai.Image.create(
+        #         #model=DALL_E_MODEL,
+        #         prompt=ai_text,
+        #         n=1,
+        #         size="256x256"
+        #     )
+        #     image_url = image_response["data"][0]["url"]
+        #     self.image_generated.emit(image_url)
 
 class AICoachApp(QWidget):
     def __init__(self):
@@ -157,9 +204,7 @@ class AICoachApp(QWidget):
             self.conversation.append(f'🧑‍💻 你: {user_text}')
             self.text_input.clear()
             self.img_path = None
-            self.get_ai_response(user_text, None)
-        self.recover_voice_button()
-        self.recover_send_button()
+            self.process_ai_response(user_text)
     
     def initCamera(self):
         self.camera_thread = CameraThread()
@@ -186,9 +231,21 @@ class AICoachApp(QWidget):
             return
         else:
             self.captured_frame_count += 1
-        self.get_ai_response(text, self.img_path)
+        self.process_ai_response(text)
+        self.chat_history.append({"role": "user", "content": text})
+    
+    def process_ai_response(self, user_text):
+        self.voice_button.setText("🤖 回應中...")
+        self.ai_thread = AIProcessingThread(self.chat_history, user_text, self.img_path)
+        self.ai_thread.response_ready.connect(self.display_ai_response)
+        self.ai_thread.start()
+    
+    def display_ai_response(self, ai_text):
+        self.conversation.append(f'🤖 AI 教練: {ai_text}')
+        self.chat_history.append({"role": "assistant", "content": ai_text})
         self.recover_voice_button()
         self.recover_send_button()
+        self.img_path = None
 
     def recover_voice_button(self):
         self.voice_button.setDisabled(False)
@@ -199,50 +256,6 @@ class AICoachApp(QWidget):
     
     def display_image(self, img_path):
         self.img_path = img_path
-    
-    def get_ai_response(self, user_input, image_path=None):
-        self.voice_button.setText("🤖 回應中...")
-
-        messages = list(self.chat_history)
-        
-        if image_path:
-            base64_image = encode_image(image_path)
-            messages.append({"role": "user", "content": [
-                        {
-                            "type": "text",
-                            "text": "(請根據圖片回答)"+user_input
-                        },
-                        {"type": "image_url", "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }}]
-                    })
-        else:
-            messages.append({"role": "user", "content": user_input})
-        
-        try:
-            response = openai.chat.completions.create(
-                model=GPT_MODEL_NAME,
-                messages=messages
-            )
-            ai_text = response.choices[0].message.content
-            self.chat_history.append({"role": "user", "content": user_input})
-            self.chat_history.append({"role": "assistant", "content": ai_text})
-        except:
-            ai_text = ""
-        finally:
-            self.conversation.append(f'🤖 AI 教練: {ai_text}')
-            self.img_path = None
-
-        # if "的圖片" in ai_text and "參考" in ai_text:
-        #     ai_text = 0
-        #     image_response = openai.Image.create(
-        #         #model=DALL_E_MODEL,
-        #         prompt=ai_text,
-        #         n=1,
-        #         size="256x256"
-        #     )
-        #     image_url = image_response["data"][0]["url"]
-        #     self.image_generated.emit(image_url)
     
     def closeEvent(self, event):
         self.camera_thread.stop()
