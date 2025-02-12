@@ -240,6 +240,8 @@ class AICoachApp(QWidget):
     
     def process_ai_response(self, user_text):
         if user_text == "":
+            self.recover_voice_button()
+            self.recover_send_button()
             return
         self.voice_button.setText("🤖 回應中...")
         self.ai_thread = AIProcessingThread(self.chat_history, user_text, self.img_path)
