@@ -8,7 +8,7 @@ import speech_recognition as sr
 from faster_whisper import WhisperModel
 import openai
 import base64
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QTextEdit, QHBoxLayout
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QTextEdit, QHBoxLayout, QSizePolicy
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
 import numpy as np
@@ -43,7 +43,7 @@ class CameraThread(QThread):
         while self.running:
             ret, frame = self.cap.read()
             if ret:
-                frame = frame[80:560]
+                frame = frame[:,80:560,:]
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 height, width, channel = frame.shape
                 qimg = QImage(frame.data, width, height, width * channel, QImage.Format.Format_RGB888)
@@ -85,9 +85,9 @@ class VoiceProcessingThread(QThread):
         # 擷取當前攝影機影像
         ret, frame = self.camera_thread.cap.read()
         if ret:
+            frame = frame[:,80:560,:]
             img_path = "./temp/captured_frame"+str(self.count)+".jpg"
-            compressed_img = frame[80:560] # crop to square
-            cv2.imwrite(img_path, compressed_img)
+            cv2.imwrite(img_path, frame)
             self.image_captured.emit(img_path)
         
         # 語音轉文字
@@ -175,15 +175,16 @@ class AICoachApp(QWidget):
         
         left_layout = QVBoxLayout()
         left_layout.addWidget(QLabel("對話紀錄:"))
-        left_layout.addWidget(self.conversation)
+        left_layout.addWidget(self.conversation, 5)
         left_layout.addWidget(QLabel("輸入:"))
-        left_layout.addWidget(self.text_input)
+        left_layout.addWidget(self.text_input, 1)
         left_layout.addWidget(self.send_button)
         left_layout.addWidget(self.voice_button)
         
         # 右側 - 攝影機畫面
         self.camera_label = QLabel(self)
-        self.camera_label.setFixedSize(500, 400)
+        self.camera_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)  # 讓 QLabel 可調整大小
+        self.camera_label.setMinimumSize(300, 300)  # 設定最小大小，避免過小
         
         right_layout = QVBoxLayout()
         right_layout.addWidget(QLabel("即時攝影機畫面:"))
@@ -191,8 +192,8 @@ class AICoachApp(QWidget):
         
         # 主佈局
         main_layout = QHBoxLayout()
-        main_layout.addLayout(left_layout, 2)
-        main_layout.addLayout(right_layout, 3)
+        main_layout.addLayout(left_layout, 3)
+        main_layout.addLayout(right_layout, 2)
         
         self.setLayout(main_layout)
         
@@ -201,10 +202,10 @@ class AICoachApp(QWidget):
         self.send_button.setDisabled(True)
         user_text = self.text_input.toPlainText()
         if user_text.strip():
-            self.conversation.append(f'🧑‍💻 你: {user_text}')
+            self.conversation.append(f'🧑 你: {user_text}')
             self.text_input.clear()
             self.img_path = None
-            self.process_ai_response(user_text)
+        self.process_ai_response(user_text)
     
     def initCamera(self):
         self.camera_thread = CameraThread()
@@ -212,7 +213,10 @@ class AICoachApp(QWidget):
         self.camera_thread.start()
     
     def update_frame(self, qimg):
-        self.camera_label.setPixmap(QPixmap.fromImage(qimg))
+        if not self.camera_label.size().isEmpty():
+            qpixmap = QPixmap.fromImage(qimg)
+            qpixmap = qpixmap.scaled(self.camera_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self.camera_label.setPixmap(qpixmap)
     
     def start_voice_processing(self):
         self.voice_button.setDisabled(True)
@@ -224,7 +228,7 @@ class AICoachApp(QWidget):
         self.voice_button.setText("🎙️ 錄音中...")
     
     def display_transcription(self, text):
-        self.conversation.append(f'🧑‍💻 你: {text}')
+        self.conversation.append(f'🧑 你: {text}')
         if text == "❌ 錄音超時，請再試一次":
             self.recover_voice_button()
             self.recover_send_button()
@@ -235,6 +239,8 @@ class AICoachApp(QWidget):
         self.chat_history.append({"role": "user", "content": text})
     
     def process_ai_response(self, user_text):
+        if user_text == "":
+            return
         self.voice_button.setText("🤖 回應中...")
         self.ai_thread = AIProcessingThread(self.chat_history, user_text, self.img_path)
         self.ai_thread.response_ready.connect(self.display_ai_response)
@@ -256,6 +262,20 @@ class AICoachApp(QWidget):
     
     def display_image(self, img_path):
         self.img_path = img_path
+
+        # 讀取圖片並轉換為 QPixmap
+        pixmap = QPixmap(img_path)
+        if pixmap.isNull():
+            print("❌ 無法讀取圖片")
+            return
+
+        # 建立 QLabel 來顯示圖片
+        image_label = QLabel()
+        image_label.setPixmap(pixmap.scaled(400, 400, Qt.AspectRatioMode.KeepAspectRatio))
+
+        # 插入 QLabel 到對話紀錄
+        self.conversation.append("📸 擷取影像:\n")
+        self.conversation.insertHtml(f'<img src="{img_path}" width="400">')
     
     def closeEvent(self, event):
         self.camera_thread.stop()
