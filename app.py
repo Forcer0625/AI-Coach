@@ -102,7 +102,7 @@ class AIProcessingThread(QThread):
         super().__init__()
         self.chat_history = chat_history
         self.user_text = user_text
-        self.img_path = None
+        self.img_path = img_path
     
     def run(self):
         messages = list(self.chat_history)
