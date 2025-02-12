@@ -25,7 +25,7 @@ GPT_MODEL_NAME = "gpt-4o-mini"
 DALL_E_MODEL = "dall-e-2"
 
 # 初始化 Whisper 本地模型
-whisper_model = WhisperModel("medium", device="cuda", compute_type="float16")
+whisper_model = WhisperModel("large-v3-turbo", device="cuda", compute_type="float16")
 
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
