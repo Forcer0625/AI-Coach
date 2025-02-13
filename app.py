@@ -103,7 +103,9 @@ class VoiceProcessingThread(QThread):
         self.transcription_done.emit(transcribed_text)
 
 class AIProcessingThread(QThread):
-    response_ready = pyqtSignal(str)
+    response_ready = pyqtSignal(bool)
+    response_streaming = pyqtSignal(str)
+    full_response = pyqtSignal(str)
     
     def __init__(self, chat_history, user_text, img_path=None):
         super().__init__()
@@ -131,13 +133,20 @@ class AIProcessingThread(QThread):
         try:
             response = openai.chat.completions.create(
                 model=GPT_MODEL_NAME,
-                messages=messages
+                messages=messages,
+                stream=True,
             )
-            ai_text = response.choices[0].message.content
+            self.response_ready.emit(True)
+            full_ai_text = ""
+            for chunk in response:
+                if chunk.choices[0].delta.content:
+                    partial_text = chunk.choices[0].delta.content
+                    full_ai_text += partial_text
+                    self.response_streaming.emit(partial_text)  # 逐步顯示
         except:
-            ai_text = ""
+            full_ai_text = ""
         finally:
-            self.response_ready.emit(ai_text)
+            self.full_response.emit(full_ai_text)
 
         # if "的圖片" in ai_text and "參考" in ai_text:
         #     ai_text = 0
@@ -170,6 +179,9 @@ class AICoachApp(QWidget):
         
         self.text_input = QTextEdit(self)
         self.text_input.setPlaceholderText("輸入你的問題...")
+
+        self.user_prefix = '[🧑 你]: '
+        self.ai_prefix = '[🤖 AI 教練]: '
 
         # 載入對話
         # 新增 session 選擇下拉式選單 (0~10)
@@ -228,7 +240,7 @@ class AICoachApp(QWidget):
         self.send_button.setDisabled(True)
         user_text = self.text_input.toPlainText()
         if user_text.strip():
-            self.conversation.append(f'🧑 你: {user_text}')
+            self.conversation.append(self.user_prefix+f'{user_text}')
             self.text_input.clear()
             self.img_path = None
         self.process_ai_response(user_text)
@@ -255,7 +267,7 @@ class AICoachApp(QWidget):
         self.voice_button.setText("🎙️ 錄音中...")
     
     def display_transcription(self, text):
-        self.conversation.append(f'🧑 你: {text}')
+        self.conversation.append(text)
         if text == "❌ 錄音超時，請再試一次":
             self.recover_voice_button()
             self.recover_send_button()
@@ -271,12 +283,26 @@ class AICoachApp(QWidget):
         self.captured_frame_count += 1
         self.voice_button.setText("🤖 回應中...")
         self.ai_thread = AIProcessingThread(self.chat_history, user_text, self.img_path)
-        self.ai_thread.response_ready.connect(self.display_ai_response)
+        self.ai_thread.response_ready.connect(self.display_ai_response_ready)
+        self.ai_thread.response_streaming.connect(self.display_ai_response)
+        self.ai_thread.full_response.connect(self.display_ai_response_end)
         self.ai_thread.start()
+
+    def display_ai_response_ready(self):
+        self.conversation.append(self.ai_prefix)
     
     def display_ai_response(self, ai_text):
-        self.conversation.append(f'🤖 AI 教練: {ai_text}')
-        self.chat_history.append({"role": "assistant", "content": ai_text})
+        cursor = self.conversation.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.insertText(ai_text)
+        self.conversation.setTextCursor(cursor)
+        self.conversation.ensureCursorVisible()
+
+    def display_ai_response_end(self, full_ai_text):
+        if full_ai_text == "":
+            self.conversation.append(self.ai_prefix+'❌ AI 回應失敗，請重試。')
+        else:
+            self.chat_history.append({"role": "assistant", "content": full_ai_text})
         self.recover_voice_button()
         self.recover_send_button()
         self.img_path = None
@@ -302,8 +328,8 @@ class AICoachApp(QWidget):
         image_label.setPixmap(pixmap.scaled(400, 400, Qt.AspectRatioMode.KeepAspectRatio))
 
         # 插入 QLabel 到對話紀錄
-        self.conversation.append("📸 擷取影像:\n")
-        self.conversation.insertHtml(f'<img src="{img_path}" width="400">')
+        self.conversation.append(self.user_prefix+'\n')
+        self.conversation.insertHtml(f'<img src="{img_path}" width="300">')
     
     def closeEvent(self, event):
         self.camera_thread.stop()
@@ -315,7 +341,7 @@ class AICoachApp(QWidget):
         with open("./session/"+str(session_id)+"/chat_history.json", "w", encoding="utf-8") as fp:
             json.dump(self.chat_history, fp, indent=2, ensure_ascii=False)
 
-        file_path = f"./session/{session_id}/conversation{session_id}.html"
+        file_path = f"./session/{session_id}/conversation.html"
 
         with open(file_path, "w", encoding="utf-8") as file:
             file.write(self.conversation.toHtml())  # 儲存完整 HTML 格式
@@ -325,7 +351,7 @@ class AICoachApp(QWidget):
     def load_session(self):
         self.session_id = str(self.session_selector.currentText())
         
-        file_path = f"./session/{self.session_id}/conversation{self.session_id}.html"
+        file_path = f"./session/{self.session_id}/conversation.html"
         if os.path.exists(file_path):
             with open(file_path, "r", encoding="utf-8") as file:
                 self.conversation.setHtml(file.read())
