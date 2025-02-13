@@ -8,7 +8,7 @@ import speech_recognition as sr
 from faster_whisper import WhisperModel
 import openai
 import base64
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QTextEdit, QHBoxLayout, QSizePolicy
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QTextEdit, QHBoxLayout, QSizePolicy, QFileDialog, QComboBox
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
 import numpy as np
@@ -26,6 +26,12 @@ DALL_E_MODEL = "dall-e-2"
 
 # 初始化 Whisper 本地模型
 whisper_model = WhisperModel("large-v3-turbo", device="cuda", compute_type="float16")
+
+INIT_CHAT_HISTORY = [
+    {"role": "developer", "content": "你是一名專業的健身教練，擅長根據使用者的動作(會有圖片)、體態和健身等問題提供專業的健身建議，請專注於健身領域的知識，並提供正確的運動指導。當有圖片時，會協助使用者根據給予的圖像回答, 請務必嚴格按照圖片回覆使用者的請求(這是最優先的事項, 模糊的回答也可以)"},#請自行判斷是否使用圖像生成工具幫助使用者，如果需要，請在回應的結尾加上關鍵字\"請參考下面的圖片說明\", 然後生成一段給DALL-E的prompt。格式參考(假設使用者詢問如何做深蹲):\"1. 一開始基本的徒手深蹲要先把雙腳打開與肩膀同寬，腳尖向前，雙手則可放在胸前交叉交疊或是雙手握拳。\n2. 把腳底平放在地上，將重心放在雙腳上。\n3. 吸氣時將重心慢慢往後，把臀部緩緩地下後移，想像後方有一張椅子，維持個3-5秒的時間，呼氣後再慢慢地回到原來的動作。\n請參考下面的圖片說明\nprompt for DALL-E\""}
+    # {'role': 'user', 'content': '如何深蹲'},
+    # {'role': 'assistant', 'content': "深蹲是一個很好的全身性訓練動作，能幫助你增強腿部和核心的力量。以下是正確的深蹲步驟和要點：\n\n1. **站位**：雙腳與肩同寬，腳尖微微外展，保持穩定的站姿。\n\n2. **姿勢準備**：將胸部挺起，肩膀放鬆，眼睛直視前方。確保背部保持自然曲線，避免駝背。\n\n3. **開始下蹲**：\n   - 同時彎曲膝蓋和髖關節，臀部向後移動，讓屁股像坐在椅子上 一樣。\n   - 保持膝蓋的方向與腳尖一致，膝蓋不應超過腳尖。\n\n4. **下蹲深度**：根據個人靈活性，可以選擇下蹲到大腿與地面平行，或者更低，視你的舒適度和靈活性而定。\n\n5. **上升**：用腳跟推地，保持核心收緊，直立起來，回到起始位置。\n\n6. **呼吸**：在下蹲時吸氣，上升時呼氣。\n\n### 注意事項：\n- 確保膝蓋不內扣，這樣可以減少受傷的風險。\n- 如果感覺又疲累或不穩定，考慮減少負荷或使用支撐物。\n- 如果有任何不適或疼痛，應立即停止並尋求專業建議。\n\n進行熱身和拉伸也是很重要的，以防止受傷並提高運動表現。祝你訓練愉快！"}
+]
 
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
@@ -60,16 +66,17 @@ class VoiceProcessingThread(QThread):
     transcription_done = pyqtSignal(str)
     image_captured = pyqtSignal(str)
     
-    def __init__(self, camera_thread, captured_frame_count):
+    def __init__(self, camera_thread, session_id, count):
         super().__init__()
         self.camera_thread = camera_thread
-        self.count = captured_frame_count
+        self.session_id = session_id
+        self.count = count
     
     def run(self):
         self.process_voice_input()
     
     def process_voice_input(self):
-        audio_file = "./temp/voice_input"+str(self.count)+".wav"
+        audio_file = "./session/"+self.session_id+"/voice_input"+str(self.count)+".wav"
         recognizer = sr.Recognizer()
         with sr.Microphone() as source:
             recognizer.adjust_for_ambient_noise(source, duration=1)
@@ -86,7 +93,7 @@ class VoiceProcessingThread(QThread):
         ret, frame = self.camera_thread.cap.read()
         if ret:
             frame = frame[:,80:560,:]
-            img_path = "./temp/captured_frame"+str(self.count)+".jpg"
+            img_path = "./session/"+self.session_id+"/captured_frame"+str(self.count)+".jpg"
             cv2.imwrite(img_path, frame)
             self.image_captured.emit(img_path)
         
@@ -150,11 +157,8 @@ class AICoachApp(QWidget):
         self.initCamera()
         self.img_path = None
         self.captured_frame_count = 0
-        self.chat_history = [
-            {"role": "developer", "content": "你是一名專業的健身教練，擅長根據使用者的動作(會有圖片)、體態和健身等問題提供專業的健身建議，請專注於健身領域的知識，並提供正確的運動指導。當有圖片時，會協助使用者根據給予的圖像回答, 請務必嚴格按照圖片回覆使用者的請求(這是最優先的事項, 模糊的回答也可以)"},#請自行判斷是否使用圖像生成工具幫助使用者，如果需要，請在回應的結尾加上關鍵字\"請參考下面的圖片說明\", 然後生成一段給DALL-E的prompt。格式參考(假設使用者詢問如何做深蹲):\"1. 一開始基本的徒手深蹲要先把雙腳打開與肩膀同寬，腳尖向前，雙手則可放在胸前交叉交疊或是雙手握拳。\n2. 把腳底平放在地上，將重心放在雙腳上。\n3. 吸氣時將重心慢慢往後，把臀部緩緩地下後移，想像後方有一張椅子，維持個3-5秒的時間，呼氣後再慢慢地回到原來的動作。\n請參考下面的圖片說明\nprompt for DALL-E\""}
-            # {'role': 'user', 'content': '如何深蹲'},
-            # {'role': 'assistant', 'content': "深蹲是一個很好的全身性訓練動作，能幫助你增強腿部和核心的力量。以下是正確的深蹲步驟和要點：\n\n1. **站位**：雙腳與肩同寬，腳尖微微外展，保持穩定的站姿。\n\n2. **姿勢準備**：將胸部挺起，肩膀放鬆，眼睛直視前方。確保背部保持自然曲線，避免駝背。\n\n3. **開始下蹲**：\n   - 同時彎曲膝蓋和髖關節，臀部向後移動，讓屁股像坐在椅子上 一樣。\n   - 保持膝蓋的方向與腳尖一致，膝蓋不應超過腳尖。\n\n4. **下蹲深度**：根據個人靈活性，可以選擇下蹲到大腿與地面平行，或者更低，視你的舒適度和靈活性而定。\n\n5. **上升**：用腳跟推地，保持核心收緊，直立起來，回到起始位置。\n\n6. **呼吸**：在下蹲時吸氣，上升時呼氣。\n\n### 注意事項：\n- 確保膝蓋不內扣，這樣可以減少受傷的風險。\n- 如果感覺又疲累或不穩定，考慮減少負荷或使用支撐物。\n- 如果有任何不適或疼痛，應立即停止並尋求專業建議。\n\n進行熱身和拉伸也是很重要的，以防止受傷並提高運動表現。祝你訓練愉快！"}
-            ]
+        self.session_id = "0"
+        self.load_session()
     
     def initUI(self):
         self.setWindowTitle("AI 健身教練")
@@ -166,6 +170,26 @@ class AICoachApp(QWidget):
         
         self.text_input = QTextEdit(self)
         self.text_input.setPlaceholderText("輸入你的問題...")
+
+        # 載入對話
+        # 新增 session 選擇下拉式選單 (0~10)
+        self.session_selector = QComboBox(self)
+        self.session_selector.addItems([str(i) for i in range(11)])  # 0~10
+        self.session_selector.currentIndexChanged.connect(self.change_session)
+        session_layout = QHBoxLayout()
+        session_layout.addWidget(QLabel("選擇對話紀錄:"))
+        session_layout.addWidget(self.session_selector)
+
+        self.clear_button = QPushButton("🗑️ 清除對話", self)
+        self.clear_button.clicked.connect(self.clear_session)
+        self.save_button = QPushButton("💾 儲存對話", self)
+        self.save_button.clicked.connect(self.save_session)
+        self.load_button = QPushButton("📂 載入對話", self)
+        self.load_button.clicked.connect(self.load_session)
+        conversation = QHBoxLayout()
+        conversation.addWidget(self.clear_button)
+        conversation.addWidget(self.save_button)
+        conversation.addWidget(self.load_button)
         
         self.send_button = QPushButton("發送", self)
         self.send_button.clicked.connect(self.process_text_input)
@@ -174,6 +198,8 @@ class AICoachApp(QWidget):
         self.voice_button.clicked.connect(self.start_voice_processing)
         
         left_layout = QVBoxLayout()
+        left_layout.addLayout(session_layout)
+        left_layout.addLayout(conversation)
         left_layout.addWidget(QLabel("對話紀錄:"))
         left_layout.addWidget(self.conversation, 5)
         left_layout.addWidget(QLabel("輸入:"))
@@ -206,6 +232,7 @@ class AICoachApp(QWidget):
             self.text_input.clear()
             self.img_path = None
         self.process_ai_response(user_text)
+        self.chat_history.append({"role": "user", "content": user_text})
     
     def initCamera(self):
         self.camera_thread = CameraThread()
@@ -221,7 +248,7 @@ class AICoachApp(QWidget):
     def start_voice_processing(self):
         self.voice_button.setDisabled(True)
         self.send_button.setDisabled(True)
-        self.voice_thread = VoiceProcessingThread(self.camera_thread, self.captured_frame_count)
+        self.voice_thread = VoiceProcessingThread(self.camera_thread, self.session_id, self.captured_frame_count)
         self.voice_thread.transcription_done.connect(self.display_transcription)
         self.voice_thread.image_captured.connect(self.display_image)
         self.voice_thread.start()
@@ -232,9 +259,7 @@ class AICoachApp(QWidget):
         if text == "❌ 錄音超時，請再試一次":
             self.recover_voice_button()
             self.recover_send_button()
-            return
-        else:
-            self.captured_frame_count += 1
+            return    
         self.process_ai_response(text)
         self.chat_history.append({"role": "user", "content": text})
     
@@ -243,6 +268,7 @@ class AICoachApp(QWidget):
             self.recover_voice_button()
             self.recover_send_button()
             return
+        self.captured_frame_count += 1
         self.voice_button.setText("🤖 回應中...")
         self.ai_thread = AIProcessingThread(self.chat_history, user_text, self.img_path)
         self.ai_thread.response_ready.connect(self.display_ai_response)
@@ -281,9 +307,46 @@ class AICoachApp(QWidget):
     
     def closeEvent(self, event):
         self.camera_thread.stop()
-        with open("chat history(only text).json", "w", encoding="utf-8") as fp:
-            json.dump(self.chat_history, fp, indent=2, ensure_ascii=False) 
+        self.save_session()
         event.accept()
+
+    def save_session(self):
+        session_id = int(self.session_id)
+        with open("./session/"+str(session_id)+"/chat_history.json", "w", encoding="utf-8") as fp:
+            json.dump(self.chat_history, fp, indent=2, ensure_ascii=False)
+
+        file_path = f"./session/{session_id}/conversation{session_id}.html"
+
+        with open(file_path, "w", encoding="utf-8") as file:
+            file.write(self.conversation.toHtml())  # 儲存完整 HTML 格式
+        
+        print(f"✅ 對話紀錄已儲存至 {file_path}")
+
+    def load_session(self):
+        self.session_id = str(self.session_selector.currentText())
+        
+        file_path = f"./session/{self.session_id}/conversation{self.session_id}.html"
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as file:
+                self.conversation.setHtml(file.read())
+            with open("./session/"+self.session_id+"/chat_history.json", "r", encoding="utf-8") as fp:
+                self.chat_history = json.load(fp)
+            print(f"📂 已載入對話紀錄: {file_path}")
+        else:
+            self.clear_session()
+            print(f"⚠️ 沒有找到對話紀錄，建立新的 session {self.session_id}")
+
+    def clear_session(self):
+        self.session_id = str(self.session_selector.currentText())
+        self.conversation.clear()
+        self.chat_history = list(INIT_CHAT_HISTORY)
+        self.count = 0
+        
+    def change_session(self):
+        self.save_session()
+        self.load_session()
+
+        
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

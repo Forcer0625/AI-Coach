@@ -12,3 +12,4 @@ reference papers/
 *.wav
 *.json
 temp/
+session/
