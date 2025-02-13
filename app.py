@@ -320,7 +320,7 @@ class AICoachApp(QWidget):
         with open(file_path, "w", encoding="utf-8") as file:
             file.write(self.conversation.toHtml())  # 儲存完整 HTML 格式
         
-        print(f"✅ 對話紀錄已儲存至 {file_path}")
+        #print(f"✅ 對話紀錄已儲存至 {file_path}")
 
     def load_session(self):
         self.session_id = str(self.session_selector.currentText())
@@ -331,10 +331,10 @@ class AICoachApp(QWidget):
                 self.conversation.setHtml(file.read())
             with open("./session/"+self.session_id+"/chat_history.json", "r", encoding="utf-8") as fp:
                 self.chat_history = json.load(fp)
-            print(f"📂 已載入對話紀錄: {file_path}")
+            #print(f"📂 已載入對話紀錄: {file_path}")
         else:
             self.clear_session()
-            print(f"⚠️ 沒有找到對話紀錄，建立新的 session {self.session_id}")
+            #print(f"⚠️ 沒有找到對話紀錄，建立新的 session {self.session_id}")
 
     def clear_session(self):
         self.session_id = str(self.session_selector.currentText())
