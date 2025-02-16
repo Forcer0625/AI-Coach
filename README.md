@@ -7,4 +7,6 @@ A fitness guidance based on generative AI, support text, voice, and camera image
 #### Voice transfer & Image
 ![](test/Voice&Image.gif)
 
-<audio controls src="test/voice_input0.wav" type="audio/wav"></audio>
+<audio controls>
+    <source src="test/voice_input0.wav" type="audio/wav">
+</audio>
