@@ -1,2 +1,2 @@
 ##  Interactive AI Fitness Coach
-A Generative AI fitness guidance, support text, voice, and camera images for interactive coaching.
+A fitness guidance based on generative AI, support text, voice, and camera images for interactive coaching.
